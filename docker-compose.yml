@@ -15,27 +15,63 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
 
-  # app:
-  #   build: .
-  #   container_name: crm_backend_app
-  #   restart: always
-  #   ports:
-  #     - "5000:5000"
-  #   environment:
-  #     - PORT=5000
-  #     - DB_HOST=db
-  #     - DB_PORT=5432
-  #     - DB_NAME=crm_db
-  #     - DB_USER=crm_user
-  #     - DB_PASSWORD=crm_password
-  #     - JWT_SECRET=crm_super_secret_key_12345
-  #     - JWT_EXPIRES_IN=7d
-  #     - NODE_ENV=development
-  #   depends_on:
-  #     - db
-  #   volumes:
-  #     - .:/usr/src/app
-  #     - /usr/src/app/node_modules
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: crm_rabbitmq
+    restart: always
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+  app:
+    build: .
+    container_name: crm_backend_app
+    restart: always
+    ports:
+      - "5001:5000"
+    environment:
+      - PORT=5000
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=crm_db
+      - DB_USER=crm_user
+      - DB_PASSWORD=crm_password
+      - JWT_SECRET=crm_super_secret_key_12345
+      - JWT_EXPIRES_IN=7d
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - NODE_ENV=development
+    depends_on:
+      - db
+      - rabbitmq
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+
+  worker:
+    build: .
+    container_name: crm_worker_app
+    restart: always
+    command: node src/worker.js
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=crm_db
+      - DB_USER=crm_user
+      - DB_PASSWORD=crm_password
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - NODE_ENV=development
+    depends_on:
+      - db
+      - rabbitmq
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
 
 volumes:
   postgres_data:
+  rabbitmq_data:

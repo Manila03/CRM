@@ -1,0 +1,10 @@
+node_modules
+npm-debug.log
+.git
+.env
+README.md
+test-api.js
+C:\Users\juanf\.gemini
+C:/Users/juanf/.gemini
+.agents
+*.log
