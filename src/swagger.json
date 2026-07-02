@@ -1,0 +1,796 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "CRM Backend API Documentation",
+    "version": "1.0.0",
+    "description": "API REST completa para la gestión de relaciones con clientes (CRM). Proporciona control de acceso basado en roles (RBAC) para administradores, gerentes y representantes de ventas."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:5000",
+      "description": "Servidor Local"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Ingrese el token JWT obtenido del inicio de sesión (Login) sin el prefijo 'Bearer'."
+      }
+    },
+    "schemas": {
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "email": { "type": "string" },
+          "role": { "type": "string", "enum": ["admin", "manager", "sales_rep"] }
+        }
+      },
+      "Company": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "industry": { "type": "string" },
+          "website": { "type": "string" },
+          "phone": { "type": "string" },
+          "address": { "type": "string" },
+          "annualRevenue": { "type": "number", "format": "float" },
+          "employeesCount": { "type": "integer" },
+          "ownerId": { "type": "integer" }
+        }
+      },
+      "Contact": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "firstName": { "type": "string" },
+          "lastName": { "type": "string" },
+          "email": { "type": "string" },
+          "phone": { "type": "string" },
+          "jobTitle": { "type": "string" },
+          "companyId": { "type": "integer", "nullable": true },
+          "ownerId": { "type": "integer" }
+        }
+      },
+      "Lead": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "firstName": { "type": "string" },
+          "lastName": { "type": "string" },
+          "email": { "type": "string" },
+          "phone": { "type": "string" },
+          "companyName": { "type": "string", "nullable": true },
+          "status": { "type": "string", "enum": ["new", "contacted", "qualified", "unqualified", "lost"] },
+          "source": { "type": "string", "enum": ["website", "referral", "cold_call", "advertising", "other"] },
+          "notes": { "type": "string", "nullable": true },
+          "ownerId": { "type": "integer" }
+        }
+      },
+      "Deal": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "amount": { "type": "number", "format": "float" },
+          "stage": { "type": "string", "enum": ["prospecting", "qualification", "proposal", "negotiation", "closed_won", "closed_lost"] },
+          "probability": { "type": "integer" },
+          "expectedCloseDate": { "type": "string", "format": "date", "nullable": true },
+          "companyId": { "type": "integer" },
+          "contactId": { "type": "integer", "nullable": true },
+          "ownerId": { "type": "integer" }
+        }
+      },
+      "Activity": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "type": { "type": "string", "enum": ["call", "email", "meeting", "note"] },
+          "title": { "type": "string" },
+          "description": { "type": "string", "nullable": true },
+          "activityDate": { "type": "string", "format": "date-time" },
+          "leadId": { "type": "integer", "nullable": true },
+          "contactId": { "type": "integer", "nullable": true },
+          "dealId": { "type": "integer", "nullable": true },
+          "userId": { "type": "integer" }
+        }
+      },
+      "Task": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "title": { "type": "string" },
+          "description": { "type": "string", "nullable": true },
+          "dueDate": { "type": "string", "format": "date-time", "nullable": true },
+          "priority": { "type": "string", "enum": ["low", "medium", "high"] },
+          "status": { "type": "string", "enum": ["pending", "in_progress", "completed"] },
+          "assignedToId": { "type": "integer", "nullable": true },
+          "leadId": { "type": "integer", "nullable": true },
+          "contactId": { "type": "integer", "nullable": true },
+          "dealId": { "type": "integer", "nullable": true }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/api/auth/register": {
+      "post": {
+        "summary": "Registrar un nuevo usuario",
+        "description": "Registra un usuario nuevo. Por defecto el rol es 'sales_rep'. Si se desea crear un 'admin' o 'manager', el cliente debe estar autenticado con un token de 'admin' o 'manager'.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "email", "password"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "email": { "type": "string", "format": "email" },
+                  "password": { "type": "string", "minLength": 6 },
+                  "role": { "type": "string", "enum": ["admin", "manager", "sales_rep"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Usuario registrado exitosamente",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "token": { "type": "string" },
+                    "data": { "$ref": "#/components/schemas/User" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Datos inválidos o correo ya registrado" }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "summary": "Iniciar sesión de usuario",
+        "description": "Autentica al usuario y devuelve un token JWT.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login exitoso",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "token": { "type": "string" },
+                    "data": { "$ref": "#/components/schemas/User" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Credenciales inválidas" }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "summary": "Obtener perfil del usuario autenticado",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Perfil retornado exitosamente",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "data": { "$ref": "#/components/schemas/User" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "No autorizado" }
+        }
+      }
+    },
+    "/api/companies": {
+      "get": {
+        "summary": "Listar Compañías",
+        "description": "Retorna una lista paginada de compañías. Los representantes de ventas solo ven sus propias compañías.",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "industry", "in": "query", "schema": { "type": "string" }, "description": "Filtrar por industria" },
+          { "name": "search", "in": "query", "schema": { "type": "string" }, "description": "Buscar por nombre" },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 10 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de compañías obtenida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "count": { "type": "integer" },
+                    "totalPages": { "type": "integer" },
+                    "currentPage": { "type": "integer" },
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/Company" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Crear Compañía",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "industry": { "type": "string" },
+                  "website": { "type": "string" },
+                  "phone": { "type": "string" },
+                  "address": { "type": "string" },
+                  "annualRevenue": { "type": "number" },
+                  "employeesCount": { "type": "integer" },
+                  "ownerId": { "type": "integer", "description": "ID del usuario propietario (solo Admin/Manager pueden asignarlo a otros)" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Compañía creada", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "$ref": "#/components/schemas/Company" } } } } } }
+        }
+      }
+    },
+    "/api/companies/{id}": {
+      "get": {
+        "summary": "Obtener Compañía por ID",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "Compañía detallada", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "$ref": "#/components/schemas/Company" } } } } } },
+          "404": { "description": "Compañía no encontrada" }
+        }
+      },
+      "put": {
+        "summary": "Actualizar Compañía",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "industry": { "type": "string" },
+                  "website": { "type": "string" },
+                  "phone": { "type": "string" },
+                  "address": { "type": "string" },
+                  "annualRevenue": { "type": "number" },
+                  "employeesCount": { "type": "integer" },
+                  "ownerId": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Compañía actualizada" }
+        }
+      },
+      "delete": {
+        "summary": "Eliminar Compañía",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "Compañía eliminada" }
+        }
+      }
+    },
+    "/api/contacts": {
+      "get": {
+        "summary": "Listar Contactos",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "companyId", "in": "query", "schema": { "type": "integer" } },
+          { "name": "search", "in": "query", "schema": { "type": "string" } },
+          { "name": "page", "in": "query", "schema": { "type": "integer" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "Contactos devueltos" }
+        }
+      },
+      "post": {
+        "summary": "Crear Contacto",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["firstName", "lastName"],
+                "properties": {
+                  "firstName": { "type": "string" },
+                  "lastName": { "type": "string" },
+                  "email": { "type": "string" },
+                  "phone": { "type": "string" },
+                  "jobTitle": { "type": "string" },
+                  "companyId": { "type": "integer" },
+                  "ownerId": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Contacto creado" }
+        }
+      }
+    },
+    "/api/contacts/{id}": {
+      "get": {
+        "summary": "Obtener Contacto por ID",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "Detalles del contacto" } }
+      },
+      "put": {
+        "summary": "Actualizar Contacto",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "firstName": { "type": "string" },
+                  "lastName": { "type": "string" },
+                  "email": { "type": "string" },
+                  "phone": { "type": "string" },
+                  "jobTitle": { "type": "string" },
+                  "companyId": { "type": "integer" },
+                  "ownerId": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Contacto actualizado" } }
+      },
+      "delete": {
+        "summary": "Eliminar Contacto",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "Contacto eliminado" } }
+      }
+    },
+    "/api/leads": {
+      "get": {
+        "summary": "Listar Leads (Prospectos)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["new", "contacted", "qualified", "unqualified", "lost"] } },
+          { "name": "source", "in": "query", "schema": { "type": "string", "enum": ["website", "referral", "cold_call", "advertising", "other"] } },
+          { "name": "search", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Lista de leads" } }
+      },
+      "post": {
+        "summary": "Crear Lead",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["firstName", "lastName"],
+                "properties": {
+                  "firstName": { "type": "string" },
+                  "lastName": { "type": "string" },
+                  "email": { "type": "string" },
+                  "phone": { "type": "string" },
+                  "companyName": { "type": "string" },
+                  "status": { "type": "string", "default": "new" },
+                  "source": { "type": "string", "default": "other" },
+                  "notes": { "type": "string" },
+                  "ownerId": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Lead creado" } }
+      }
+    },
+    "/api/leads/{id}": {
+      "get": {
+        "summary": "Obtener Lead por ID",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "Detalles del lead" } }
+      },
+      "put": {
+        "summary": "Actualizar Lead",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": {
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "firstName": { "type": "string" }, "lastName": { "type": "string" }, "status": { "type": "string" } } } } }
+        },
+        "responses": { "200": { "description": "Lead actualizado" } }
+      },
+      "delete": {
+        "summary": "Eliminar Lead",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "Lead eliminado" } }
+      }
+    },
+    "/api/leads/{id}/convert": {
+      "post": {
+        "summary": "Convertir/Calificar Lead a Contacto y Compañía",
+        "description": "Realiza una conversión atómica bajo transacciones SQL. Genera una Compañía y un Contacto asociado al Lead, mueve las tareas y actividades del lead a las nuevas entidades, y crea un Negocio (Deal) opcional.",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "createDeal": { "type": "boolean", "description": "Indica si se creará un negocio de pipeline asociado a esta conversión" },
+                  "dealName": { "type": "string" },
+                  "dealAmount": { "type": "number" },
+                  "dealExpectedCloseDate": { "type": "string", "format": "date" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Conversión atómica completada exitosamente",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "message": { "type": "string" },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "company": { "$ref": "#/components/schemas/Company" },
+                        "contact": { "$ref": "#/components/schemas/Contact" },
+                        "deal": { "$ref": "#/components/schemas/Deal", "nullable": true }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/deals": {
+      "get": {
+        "summary": "Listar Negocios (Deals)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "stage", "in": "query", "schema": { "type": "string", "enum": ["prospecting", "qualification", "proposal", "negotiation", "closed_won", "closed_lost"] } },
+          { "name": "companyId", "in": "query", "schema": { "type": "integer" } },
+          { "name": "search", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Lista de deals" } }
+      },
+      "post": {
+        "summary": "Crear Negocio (Deal)",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "companyId"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "amount": { "type": "number" },
+                  "stage": { "type": "string", "default": "prospecting" },
+                  "probability": { "type": "integer", "description": "Si se omite, se asigna un valor por defecto basado en la etapa (ej. prospecting = 10%)" },
+                  "expectedCloseDate": { "type": "string", "format": "date" },
+                  "companyId": { "type": "integer" },
+                  "contactId": { "type": "integer" },
+                  "ownerId": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Deal creado" } }
+      }
+    },
+    "/api/deals/{id}": {
+      "get": {
+        "summary": "Obtener Negocio por ID",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "Detalles del deal" } }
+      },
+      "put": {
+        "summary": "Actualizar Negocio",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": {
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "name": { "type": "string" }, "amount": { "type": "number" }, "stage": { "type": "string" } } } } }
+        },
+        "responses": { "200": { "description": "Deal actualizado" } }
+      },
+      "delete": {
+        "summary": "Eliminar Negocio",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "Deal eliminado" } }
+      }
+    },
+    "/api/activities": {
+      "get": {
+        "summary": "Listar Actividades",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "leadId", "in": "query", "schema": { "type": "integer" } },
+          { "name": "contactId", "in": "query", "schema": { "type": "integer" } },
+          { "name": "dealId", "in": "query", "schema": { "type": "integer" } },
+          { "name": "type", "in": "query", "schema": { "type": "string", "enum": ["call", "email", "meeting", "note"] } }
+        ],
+        "responses": { "200": { "description": "Lista de actividades" } }
+      },
+      "post": {
+        "summary": "Registrar Actividad",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["type", "title"],
+                "properties": {
+                  "type": { "type": "string", "enum": ["call", "email", "meeting", "note"] },
+                  "title": { "type": "string" },
+                  "description": { "type": "string" },
+                  "activityDate": { "type": "string", "format": "date-time" },
+                  "leadId": { "type": "integer" },
+                  "contactId": { "type": "integer" },
+                  "dealId": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Actividad registrada" } }
+      }
+    },
+    "/api/activities/{id}": {
+      "delete": {
+        "summary": "Eliminar Actividad",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "Actividad eliminada" } }
+      }
+    },
+    "/api/tasks": {
+      "get": {
+        "summary": "Listar Tareas",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["pending", "in_progress", "completed"] } },
+          { "name": "priority", "in": "query", "schema": { "type": "string", "enum": ["low", "medium", "high"] } }
+        ],
+        "responses": { "200": { "description": "Lista de tareas" } }
+      },
+      "post": {
+        "summary": "Crear Tarea",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["title"],
+                "properties": {
+                  "title": { "type": "string" },
+                  "description": { "type": "string" },
+                  "dueDate": { "type": "string", "format": "date-time" },
+                  "priority": { "type": "string", "default": "medium" },
+                  "status": { "type": "string", "default": "pending" },
+                  "assignedToId": { "type": "integer" },
+                  "leadId": { "type": "integer" },
+                  "contactId": { "type": "integer" },
+                  "dealId": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Tarea creada" } }
+      }
+    },
+    "/api/tasks/{id}": {
+      "get": {
+        "summary": "Obtener Tarea por ID",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "Detalles de tarea" } }
+      },
+      "put": {
+        "summary": "Actualizar Tarea",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": {
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "title": { "type": "string" }, "status": { "type": "string" } } } } }
+        },
+        "responses": { "200": { "description": "Tarea actualizada" } }
+      },
+      "delete": {
+        "summary": "Eliminar Tarea",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "Tarea eliminada" } }
+      }
+    },
+    "/api/reports/pipeline": {
+      "get": {
+        "summary": "Resumen del Pipeline de Negocios",
+        "description": "Devuelve la cantidad de negocios y la suma del monto acumulado agrupados por etapa (stage). Los sales_rep ven solo sus negocios.",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Resumen devuelto",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "stage": { "type": "string" },
+                          "count": { "type": "integer" },
+                          "totalAmount": { "type": "number" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/reports/sales": {
+      "get": {
+        "summary": "Rendimiento de Ventas por Vendedor",
+        "description": "Calcula el monto facturado acumulado de negocios ganados (closed_won) agrupado por representante. Si un sales_rep accede, solo verá su propio rendimiento.",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Ranking devuelto exitosamente",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "ownerId": { "type": "integer" },
+                          "totalWonAmount": { "type": "number" },
+                          "dealsWonCount": { "type": "integer" },
+                          "owner": {
+                            "type": "object",
+                            "properties": {
+                              "id": { "type": "integer" },
+                              "name": { "type": "string" },
+                              "email": { "type": "string" }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/reports/leads": {
+      "get": {
+        "summary": "Reporte de Conversión de Leads",
+        "description": "Retorna el total de leads del usuario, los leads calificados ('qualified') y calcula el porcentaje global de conversión.",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Métricas devueltas exitosamente",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "totalLeads": { "type": "integer" },
+                        "qualifiedLeads": { "type": "integer" },
+                        "conversionRatePercent": { "type": "number" },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": { "type": "integer" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
