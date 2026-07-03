@@ -52,25 +52,26 @@ services:
   #     - .:/usr/src/app
   #     - /usr/src/app/node_modules
 
-  worker:
-    build: .
-    container_name: crm_worker_app
-    restart: always
-    command: node src/worker.js
-    environment:
-      - DB_HOST=db
-      - DB_PORT=5432
-      - DB_NAME=crm_db
-      - DB_USER=crm_user
-      - DB_PASSWORD=crm_password
-      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
-      - NODE_ENV=development
-    depends_on:
-      - db
-      - rabbitmq
-    volumes:
-      - .:/usr/src/app
-      - /usr/src/app/node_modules
+  # worker:
+  #   build: .
+  #   container_name: crm_worker_app
+  #   restart: always
+  #   command: node src/worker.js
+  #   environment:
+  #     - DB_HOST=db
+  #     - DB_PORT=5432
+  #     - DB_NAME=crm_db
+  #     - DB_USER=crm_user
+  #     - DB_PASSWORD=crm_password
+  #     - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+  #     - NODE_ENV=development
+  #     - INGEST_SECRET=${INGEST_SECRET}
+  #   depends_on:
+  #     - db
+  #     - rabbitmq
+  #   volumes:
+  #     - .:/usr/src/app
+  #     - /usr/src/app/node_modules
 
 volumes:
   postgres_data:

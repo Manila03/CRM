@@ -178,6 +178,30 @@ function cleanPhone(text) {
   return text.replace(/[^\d+\-\s]/g, '');
 }
 
+// Función para extraer coordenadas latitud/longitud de URLs de Google Maps
+function extractCoordinates(url) {
+  if (!url) return { lat: null, lon: null };
+  
+  // Patrón 1: @lat,lon
+  const atMatch = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+  if (atMatch) {
+    return {
+      lat: parseFloat(atMatch[1]),
+      lon: parseFloat(atMatch[2])
+    };
+  }
+
+  // Patrón 2: !3dlat!4dlon
+  const bangMatch = url.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/);
+  if (bangMatch) {
+    return {
+      lat: parseFloat(bangMatch[1]),
+      lon: parseFloat(bangMatch[2])
+    };
+  }
+
+  return { lat: null, lon: null };
+}
 
 // Función auxiliar para retardar la ejecución
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -283,6 +307,9 @@ async function main() {
           await page.goto(item.href, { waitUntil: 'networkidle2', timeout: 45000 });
           await delay(3000);
 
+          const currentUrl = page.url();
+          const coords = extractCoordinates(currentUrl) || extractCoordinates(item.href);
+
           const details = await page.evaluate(() => {
             const nameEl = document.querySelector('h1.DUwDvf');
             const categoryEl = document.querySelector('button.DkEaCc, span.DkEaCc');
@@ -312,6 +339,8 @@ async function main() {
             // Limpiar teléfono (solo números, "+" y "-") y dirección (sin emojis ni emoticonos)
             details.phone = cleanPhone(details.phone);
             details.address = cleanEmojisAndEmoticons(details.address);
+            details.lat = coords.lat;
+            details.lon = coords.lon;
 
             // REGLA DE NEGOCIO: Si no tiene NI Website ni Teléfono, se descarta por completo.
             const hasWebsite = details.website && details.website.trim() !== '' && details.website.trim() !== 'S/D';
@@ -329,12 +358,15 @@ async function main() {
               industry: details.category || 'Retail',
               website: details.website || '',
               phone: details.phone || '',
-              address: details.address || 'Argentina'
+              address: details.address || 'Argentina',
+              lat: details.lat,
+              lon: details.lon,
+              gmapsUrl: item.href
             });
 
             channel.sendToQueue(queueName, Buffer.from(message), { persistent: true });
             publishedCount++;
-            console.log(`      ✔ PUBLICADO en RabbitMQ: "${details.name}"`);
+            console.log(`      ✔ PUBLICADO en RabbitMQ: "${details.name}" (Lat: ${details.lat}, Lon: ${details.lon})`);
           }
         } catch (itemErr) {
           console.log(`      ⚠ Error extrayendo detalles de este local: ${itemErr.message}`);
