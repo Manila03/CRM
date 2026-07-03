@@ -30,7 +30,7 @@ const connectWithRetry = async (retries = 5, delay = 5000) => {
 };
 
 const startServer = async () => {
-  await connectWithRetry();
+  // await connectWithRetry();
 
   app.listen(PORT, () => {
     console.log(`Servidor CRM iniciado en puerto ${PORT} en modo ${process.env.NODE_ENV || 'development'}`);

@@ -1,6 +1,8 @@
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { connectRabbitMQ, getQueueName } from '../src/config/rabbitmq.js';
+import { ingestCompany } from '../src/worker.js';
+
+const MAX_SCROLL_ITERATIONS = 30;
 
 // Usar el plugin de ocultamiento de Puppeteer
 puppeteer.use(StealthPlugin());
@@ -206,65 +208,95 @@ function extractCoordinates(url) {
 // Función auxiliar para retardar la ejecución
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+const BROWSER_ARGS = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-blink-features=AutomationControlled',
+  '--window-size=1280,800'
+];
+
+async function safeGoto(page, url, retries = 3) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForFunction(() => document.readyState === 'complete', { timeout: 15000 }).catch(() => {});
+      return;
+    } catch (err) {
+      if (attempt === retries) throw err;
+      console.log(`   ⚠ Navegación fallida (intento ${attempt}/${retries}): ${err.message}`);
+      await delay(2000 * attempt);
+    }
+  }
+}
+
+async function dismissConsent(page) {
+  try {
+    await page.evaluate(() => {
+      const labels = ['Aceptar todo', 'Accept all', 'Rechazar todo', 'Reject all', 'Acepto'];
+      for (const el of document.querySelectorAll('button, div[role="button"]')) {
+        const text = el.textContent?.trim() || '';
+        if (labels.some(label => text.includes(label))) {
+          el.click();
+          return;
+        }
+      }
+    });
+  } catch {
+    // El banner de cookies puede no estar presente.
+  }
+}
+
+async function waitForResults(page) {
+  await page.waitForSelector('a.hfpxzc, div[role="feed"]', { timeout: 30000 }).catch(() => {});
+}
+
 async function main() {
   console.log('======================================================');
-  console.log('📣 INICIANDO PUBLICADOR / SCRAPER DE GOOGLE MAPS 📣');
+  console.log('📣 INICIANDO SCRAPER + INGESTIÓN DE GOOGLE MAPS 📣');
   console.log(`📊 Total de combinaciones posibles: ${ALL_COMBINATIONS.length}`);
   console.log(`🔍 Consultas seleccionadas para esta sesión: ${SEARCH_QUERIES.length}`);
   console.log(`💡 Para limitar la ejecución: LIMIT=X node scripts/populate-db.js`);
   console.log(`💡 Para ejecutar todo: RUN_ALL=true node scripts/populate-db.js`);
   console.log('======================================================');
 
-  // 1. Conectar a RabbitMQ para poder publicar mensajes
-  let connection, channel;
-  try {
-    const connInfo = await connectRabbitMQ(5, 3000);
-    connection = connInfo.connection;
-    channel = connInfo.channel;
-  } catch (error) {
-    console.error('❌ No se pudo establecer conexión con RabbitMQ. Deteniendo publicador.', error.message);
-    process.exit(1);
-  }
-
-  const queueName = getQueueName();
   let browser = null;
-  let publishedCount = 0;
+  let ingestedCount = 0;
   let discardedCount = 0;
+  let errorCount = 0;
+  const seenHrefs = new Set();
 
   // 2. Ejecutar scraping de Google Maps con Puppeteer
   try {
     console.log('\n🔍 Iniciando Puppeteer con plugin de ocultamiento (Stealth)...');
     
     browser = await puppeteer.launch({
-      headless: "new",
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process',
-        '--disable-gpu'
-      ]
+      headless: true,
+      args: BROWSER_ARGS
     });
 
     const page = await browser.newPage();
+    page.setDefaultNavigationTimeout(60000);
+    page.setDefaultTimeout(45000);
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
     await page.setViewport({ width: 1280, height: 800 });
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'es-AR,es;q=0.9' });
 
     console.log('✔ Navegador lanzado con éxito.');
 
     for (const query of SEARCH_QUERIES) {
+      try {
       console.log(`\n🔎 Buscando en Google Maps: "${query}"...`);
       const searchUrl = `https://www.google.com/maps/search/${encodeURIComponent(query)}`;
       
-      await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-      await delay(4000);
+      await safeGoto(page, searchUrl);
+      await dismissConsent(page);
+      await delay(3000);
+      await waitForResults(page);
 
       // Desplazarse por el feed de resultados
       console.log('⏳ Cargando comercios mediante scroll...');
-      await page.evaluate(async () => {
+      await page.evaluate(async (maxScrollIterations) => {
         const findScrollContainer = () => {
           const feeds = document.querySelectorAll('div[role="feed"]');
           if (feeds.length > 0) return feeds[0];
@@ -279,13 +311,19 @@ async function main() {
         if (!container) return;
 
         let lastHeight = container.scrollHeight;
-        for (let i = 0; i < 6; i++) { // Desplazamiento para cargar suficientes comercios reales
+        let stagnantRounds = 0;
+        for (let i = 0; i < maxScrollIterations; i++) {
           container.scrollBy(0, container.scrollHeight);
           await new Promise(res => setTimeout(res, 1500));
-          if (container.scrollHeight === lastHeight) break;
-          lastHeight = container.scrollHeight;
+          if (container.scrollHeight === lastHeight) {
+            stagnantRounds++;
+            if (stagnantRounds >= 2) break;
+          } else {
+            stagnantRounds = 0;
+            lastHeight = container.scrollHeight;
+          }
         }
-      });
+      }, MAX_SCROLL_ITERATIONS);
 
       // Extraer los enlaces de locales
       const itemLinks = await page.evaluate(() => {
@@ -298,14 +336,20 @@ async function main() {
 
       console.log(`✔ Se encontraron ${itemLinks.length} comercios preliminares.`);
 
-      // Procesar los primeros 12 locales de cada búsqueda
-      const itemsToScrape = itemLinks.slice(0, 12);
+      const itemsToScrape = itemLinks.filter(item => {
+        if (!item.href || seenHrefs.has(item.href)) return false;
+        seenHrefs.add(item.href);
+        return true;
+      });
+
+      console.log(`   📋 Procesando ${itemsToScrape.length} comercios nuevos (${itemLinks.length} en pantalla, ${seenHrefs.size} únicos en sesión).`);
+
       for (const item of itemsToScrape) {
         try {
           console.log(`   👉 Extrayendo: "${item.name}"...`);
           
-          await page.goto(item.href, { waitUntil: 'networkidle2', timeout: 45000 });
-          await delay(3000);
+          await safeGoto(page, item.href);
+          await delay(2500);
 
           const currentUrl = page.url();
           const coords = extractCoordinates(currentUrl) || extractCoordinates(item.href);
@@ -352,8 +396,7 @@ async function main() {
               continue;
             }
 
-            // Publicar el comercio como mensaje JSON en la cola de RabbitMQ
-            const message = JSON.stringify({
+            const result = await ingestCompany({
               name: details.name,
               industry: details.category || 'Retail',
               website: details.website || '',
@@ -364,36 +407,40 @@ async function main() {
               gmapsUrl: item.href
             });
 
-            channel.sendToQueue(queueName, Buffer.from(message), { persistent: true });
-            publishedCount++;
-            console.log(`      ✔ PUBLICADO en RabbitMQ: "${details.name}" (Lat: ${details.lat}, Lon: ${details.lon})`);
+            if (result.discarded) {
+              discardedCount++;
+              console.log(`      🚫 DESCARTE: "${details.name}" no posee teléfono ni sitio web.`);
+            } else if (result.ok) {
+              ingestedCount++;
+              console.log(`      ✔ INGESTADO: "${details.name}" (Lat: ${details.lat}, Lon: ${details.lon})`);
+            } else {
+              errorCount++;
+              console.error(`      ❌ Error al ingestar "${details.name}": ${result.status} - ${result.response}`);
+            }
           }
         } catch (itemErr) {
           console.log(`      ⚠ Error extrayendo detalles de este local: ${itemErr.message}`);
         }
       }
+      } catch (queryErr) {
+        console.error(`   ❌ Error en búsqueda "${query}": ${queryErr.message}`);
+      }
     }
 
-    console.log('\n🏁 Scraping e inyección en cola completada.');
+    console.log('\n🏁 Scraping e ingestión completada.');
 
   } catch (scrapeErr) {
     console.error('\n❌ Ocurrió un error general durante el proceso de scraping:', scrapeErr.message);
   } finally {
     if (browser) await browser.close();
-    
-    // Dar un pequeño delay para asegurar la transmisión de los buffers de RabbitMQ antes de cerrar
-    await delay(2000);
-    if (connection) {
-      await channel.close();
-      await connection.close();
-      console.log('✔ Conexiones a RabbitMQ cerradas de forma ordenada.');
-    }
   }
 
   console.log('======================================================');
-  console.log('🎉 RESUMEN DE LA SESIÓN DE PUBLICACIÓN 🎉');
-  console.log(`🔹 Mensajes Enviados a Cola: ${publishedCount}`);
+  console.log('🎉 RESUMEN DE LA SESIÓN DE INGESTIÓN 🎉');
+  console.log(`🔹 Comercios Ingestados: ${ingestedCount}`);
   console.log(`🔹 Locales Descartados (Sin Web/Tel): ${discardedCount}`);
+  console.log(`🔹 Errores de Ingestión: ${errorCount}`);
+  console.log(`🔹 Comercios únicos vistos: ${seenHrefs.size}`);
   console.log('======================================================\n');
   process.exit(0);
 }
