@@ -6,13 +6,178 @@ import { connectRabbitMQ, getQueueName } from '../src/config/rabbitmq.js';
 puppeteer.use(StealthPlugin());
 
 // Configuración de términos de búsqueda en Google Maps para rastrear locales en Argentina
-const SEARCH_QUERIES = [
-  'Restaurantes en Buenos Aires',
-  'Ferreterias en Cordoba',
-  'Farmacias en Rosario',
-  'Tiendas de ropa en Mendoza',
-  'Supermercados en La Plata'
+const BUSINESS_TYPES = [
+  'Restaurantes',
+  'Ferreterías',
+  'Farmacias',
+  'Tiendas de ropa',
+  'Supermercados',
+  'Cafeterías',
+  'Panaderías',
+  'Peluquerías',
+  'Gimnasios',
+  'Talleres mecánicos',
+  'Veterinarias',
+  'Inmobiliarias',
+  'Carnicerías',
+  'Verdulerías',
+  'Dietéticas',
+  'Librerías',
+  'Dentistas',
+  'Hoteles',
+  'Heladerías',
+  'Jugueterías',
+  'Zapaterías',
+  'Bazares',
+  'Kioscos',
+  'Cervecerías',
+  'Centros de estética',
+  'Consultorios médicos',
+  'Viveros',
+  'Mueblerías',
+  'Pet shops',
+  'Casas de computación',
+  'Lavaderos de autos',
+  'Ópticas',
+  'Centros médicos',
+  'Escuelas de manejo',
+  'Salones de eventos',
+  'Estaciones de servicio',
+  'Distribuidoras de bebidas',
+  'Fiambrerías',
+  'Pinturerías',
+  'Casas de repuestos'
 ];
+
+const LOCATIONS = [
+  // CABA
+  'CABA',
+  // Buenos Aires (Provincia)
+  'La Plata, Buenos Aires',
+  'Mar del Plata, Buenos Aires',
+  'Bahía Blanca, Buenos Aires',
+  'Tandil, Buenos Aires',
+  'Pilar, Buenos Aires',
+  'San Isidro, Buenos Aires',
+  'Quilmes, Buenos Aires',
+  'Tigre, Buenos Aires',
+  'Lomas de Zamora, Buenos Aires',
+  // Catamarca
+  'San Fernando del Valle de Catamarca',
+  // Chaco
+  'Resistencia, Chaco',
+  'Presidencia Roque Sáenz Peña, Chaco',
+  // Chubut
+  'Comodoro Rivadavia, Chubut',
+  'Puerto Madryn, Chubut',
+  'Trelew, Chubut',
+  // Córdoba
+  'Córdoba',
+  'Villa Carlos Paz, Córdoba',
+  'Río Cuarto, Córdoba',
+  'Villa María, Córdoba',
+  // Corrientes
+  'Corrientes',
+  'Goya, Corrientes',
+  // Entre Ríos
+  'Paraná, Entre Ríos',
+  'Concordia, Entre Ríos',
+  'Gualeguaychú, Entre Ríos',
+  // Formosa
+  'Formosa',
+  // Jujuy
+  'San Salvador de Jujuy',
+  'San Pedro de Jujuy',
+  // La Pampa
+  'Santa Rosa, La Pampa',
+  'General Pico, La Pampa',
+  // La Rioja
+  'La Rioja',
+  // Mendoza
+  'Mendoza',
+  'San Rafael, Mendoza',
+  'Godoy Cruz, Mendoza',
+  // Misiones
+  'Posadas, Misiones',
+  'Puerto Iguazú, Misiones',
+  // Neuquén
+  'Neuquén',
+  'San Martín de los Andes, Neuquén',
+  // Río Negro
+  'San Carlos de Bariloche, Río Negro',
+  'Cipolletti, Río Negro',
+  'Viedma, Río Negro',
+  // Salta
+  'Salta',
+  'San Ramón de la Nueva Orán, Salta',
+  // San Juan
+  'San Juan',
+  // San Luis
+  'San Luis',
+  'Villa Mercedes, San Luis',
+  // Santa Cruz
+  'Río Gallegos, Santa Cruz',
+  'El Calafate, Santa Cruz',
+  // Santa Fe
+  'Rosario, Santa Fe',
+  'Santa Fe',
+  'Rafaela, Santa Fe',
+  'Venado Tuerto, Santa Fe',
+  // Santiago del Estero
+  'Santiago del Estero',
+  'La Banda, Santiago del Estero',
+  // Tierra del Fuego
+  'Ushuaia, Tierra del Fuego',
+  'Río Grande, Tierra del Fuego',
+  // Tucumán
+  'San Miguel de Tucumán',
+  'Yerba Buena, Tucumán'
+];
+
+// Generar combinaciones en formato "Negocio en Ubicación"
+const ALL_COMBINATIONS = [];
+for (const business of BUSINESS_TYPES) {
+  for (const location of LOCATIONS) {
+    ALL_COMBINATIONS.push(`${business} en ${location}`);
+  }
+}
+
+// Algoritmo de Fisher-Yates para mezclar (shuffle) las combinaciones y obtener diversidad en cada ejecución
+function shuffleArray(array) {
+  const arr = [...array];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+const limitEnv = process.env.LIMIT;
+const runAll = process.env.RUN_ALL === 'true';
+const shuffledQueries = shuffleArray(ALL_COMBINATIONS);
+
+const SEARCH_QUERIES = runAll 
+  ? shuffledQueries 
+  : shuffledQueries.slice(0, limitEnv ? parseInt(limitEnv, 10) : 15);
+
+
+// Función para limpiar emojis, símbolos regionales y emoticonos de un texto (para la dirección)
+function cleanEmojisAndEmoticons(text) {
+  if (!text) return text;
+  
+  // Permitimos únicamente: Letras (cualquier idioma/acentos), Números, Espacios, comas, puntos, guiones, barras, paréntesis, signo de grado (°) y numeral (#)
+  const cleaned = text.replace(/[^\p{L}\p{N}\s.,\-\/()°#''"']/gu, '');
+  
+  // Limpiar espacios múltiples que puedan haber quedado
+  return cleaned.replace(/\s+/g, ' ').trim();
+}
+
+// Función para limpiar teléfonos, dejando únicamente números, espacios y los signos "+" y "-"
+function cleanPhone(text) {
+  if (!text) return text;
+  return text.replace(/[^\d+\-\s]/g, '');
+}
+
 
 // Función auxiliar para retardar la ejecución
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -20,6 +185,10 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 async function main() {
   console.log('======================================================');
   console.log('📣 INICIANDO PUBLICADOR / SCRAPER DE GOOGLE MAPS 📣');
+  console.log(`📊 Total de combinaciones posibles: ${ALL_COMBINATIONS.length}`);
+  console.log(`🔍 Consultas seleccionadas para esta sesión: ${SEARCH_QUERIES.length}`);
+  console.log(`💡 Para limitar la ejecución: LIMIT=X node scripts/populate-db.js`);
+  console.log(`💡 Para ejecutar todo: RUN_ALL=true node scripts/populate-db.js`);
   console.log('======================================================');
 
   // 1. Conectar a RabbitMQ para poder publicar mensajes
@@ -140,6 +309,10 @@ async function main() {
           });
 
           if (details.name) {
+            // Limpiar teléfono (solo números, "+" y "-") y dirección (sin emojis ni emoticonos)
+            details.phone = cleanPhone(details.phone);
+            details.address = cleanEmojisAndEmoticons(details.address);
+
             // REGLA DE NEGOCIO: Si no tiene NI Website ni Teléfono, se descarta por completo.
             const hasWebsite = details.website && details.website.trim() !== '' && details.website.trim() !== 'S/D';
             const hasPhone = details.phone && details.phone.trim() !== '' && details.phone.trim() !== 'S/D';
