@@ -5,8 +5,9 @@
   "main": "src/server.js",
   "type": "module",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node src/server.js"
+    "dev": "node src/server.js",
+    "populate": "node scripts/populate-db.js",
+    "worker": "node src/worker.js"
   },
   "keywords": [
     "crm",

@@ -1,6 +1,23 @@
 import { connectRabbitMQ, getQueueName } from './config/rabbitmq.js';
 import { sequelize, Company, User } from './models/index.js';
 
+// Función para limpiar emojis, símbolos regionales y emoticonos de un texto (para la dirección)
+function cleanEmojisAndEmoticons(text) {
+  if (!text) return text;
+  
+  // Permitimos únicamente: Letras (cualquier idioma/acentos), Números, Espacios, comas, puntos, guiones, barras, paréntesis, signo de grado (°) y numeral (#)
+  const cleaned = text.replace(/[^\p{L}\p{N}\s.,\-\/()°#''"']/gu, '');
+  
+  // Limpiar espacios múltiples que puedan haber quedado
+  return cleaned.replace(/\s+/g, ' ').trim();
+}
+
+// Función para limpiar teléfonos, dejando únicamente números, espacios y los signos "+" y "-"
+function cleanPhone(text) {
+  if (!text) return text;
+  return text.replace(/[^\d+\-\s]/g, '');
+}
+
 const startWorker = async () => {
   console.log('======================================================');
   console.log('👷 INICIANDO CONSUMIDOR DE COMPAÑÍAS (WORKER) 👷');
@@ -50,6 +67,10 @@ const startWorker = async () => {
     try {
       const comp = JSON.parse(companyDataStr);
       console.log(`[Worker] 📦 Recibida compañía: "${comp.name}"`);
+
+      // Limpiar teléfono (solo números, "+" y "-") y dirección (sin emojis ni emoticonos)
+      comp.phone = cleanPhone(comp.phone);
+      comp.address = cleanEmojisAndEmoticons(comp.address);
 
       // REGLA DE NEGOCIO: Si no se encuentra NI Website ni Teléfono, descartar la entrada completamente.
       // Limpiamos los placeholders comunes como 'S/D' o vacíos
